@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sudoku Solver - Dancing Links (DLX)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* Custom Grid Styling for 3x3 Blocks */
+        .sudoku-cell:nth-child(3n) { border-right-width: 4px; border-right-color: #374151; }
+        .sudoku-cell:nth-child(9n) { border-right-width: 1px; border-right-color: #e5e7eb; } /* Reset edge */
+        .sudoku-cell:nth-child(n+19):nth-child(-n+27),
+        .sudoku-cell:nth-child(n+46):nth-child(-n+54) { border-bottom-width: 4px; border-bottom-color: #374151; }
+        
+        /* Hide number spinner arrows */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen flex flex-col items-center justify-center p-4 text-slate-800">
+
+    <div class="max-w-4xl w-full bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
+        
+        <!-- Left Panel: Controls & Info -->
+        <div class="w-full md:w-1/3 bg-slate-900 text-white p-8 flex flex-col justify-between">
+            <div>
+                <h1 class="text-3xl font-bold mb-2 text-cyan-400">Sudoku DLX</h1>
+                <p class="text-slate-400 text-sm mb-6">Powered by Donald Knuth's Dancing Links Algorithm.</p>
+                
+                <div class="mb-4">
+                    <label for="algo-select" class="block text-sm font-medium text-slate-400 mb-2">Solver Algorithm</label>
+                    <select id="algo-select" class="w-full py-2 px-3 bg-slate-700 text-white rounded-lg border border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                        <option value="dlx" selected>Dancing Links (DLX)</option>
+                        <option value="naive">Naive Backtracking (Arrays)</option>
+                    </select>
+                </div>
+
+                <div class="space-y-4">
+                    <button onclick="app.generatePuzzle()" class="w-full py-3 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        Generate New
+                    </button>
+                    <button onclick="app.solve()" class="w-full py-3 px-4 bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-lg font-bold transition shadow-lg shadow-cyan-500/30 flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        Solve Instantly
+                    </button>
+                    <button onclick="app.clearBoard()" class="w-full py-3 px-4 border border-slate-600 hover:bg-slate-800 rounded-lg font-semibold transition text-slate-300">
+                        Clear Board
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-8">
+                <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                    <h3 class="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">Algorithm Stats</h3>
+                    <div class="flex justify-between mb-1">
+                        <span class="text-sm">Status:</span>
+                        <span id="status-text" class="text-sm font-mono text-cyan-400">Ready</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-sm">Time:</span>
+                        <span id="timer-text" class="text-sm font-mono text-green-400">0ms</span>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-500 mt-4 leading-relaxed">
+                    The 9x9 grid is converted into an Exact Cover matrix with 729 rows and 324 columns. DLX traverses this sparse matrix to find the unique intersection.
+                </p>
+            </div>
+        </div>
+
+        <!-- Right Panel: The Grid -->
+        <div class="w-full md:w-2/3 p-4 md:p-8 flex items-center justify-center bg-slate-50">
+            <div id="grid-container" class="grid grid-cols-9 border-4 border-slate-700 bg-slate-700 w-full max-w-[500px] aspect-square shadow-xl">
+                <!-- Cells generated by JS -->
+            </div>
+        </div>
+    </div>
+
+<script>
+/**
+ * PART 1: DANCING LINKS (DLX) ENGINE
+ * -------------------------------------------------------
+ * This class handles the generic exact cover problem.
+ */
+class DLXNode {
+    constructor() {
+        this.left = this;
+        this.right = this;
+        this.up = this;
+        this.down = this;
+        this.column = null; // Pointer to Column Header
+        this.rowIndex = -1; // ID of the row (0-728 for Sudoku)
+    }
+}
+
+class ColumnNode extends DLXNode {
+    constructor(id) {
+        super();
+        this.id = id;
+        this.size = 0;
+        this.column = this;
+    }
+}
+
+class DLX {
+    constructor() {
+        this.header = new ColumnNode("header");
+        this.solutions = [];
+        this.nodes = []; // Keep track for garbage collection logic if needed
+        this.colMap = {}; // <-- ADD THIS: To quickly find columns by ID
+    }
+
+    // Create the matrix headers (constraints)
+    // For Sudoku: 324 Columns
+    buildHeaders(numColumns) {
+        let current = this.header;
+        this.colMap = {}; // <-- ADD THIS: Clear/init the map
+        for (let i = 0; i < numColumns; i++) {
+            let col = new ColumnNode(i);
+            col.right = this.header;
+            col.left = current;
+            current.right = col;
+            this.header.left = col;
+            current = col;
+            this.colMap[i] = col; // <-- ADD THIS: Store col node by its ID
+        }
+    }
+
+    // --- ADD THIS ENTIRE FUNCTION BACK ---
+    addRow(rowIndex, indices) {
+        let firstNode = null;
+        for (let colIdx of indices) {
+            let col = this.colMap[colIdx]; // Fast O(1) lookup
+            if (!col) continue; // Should not happen if indices are correct
+
+            let newNode = new DLXNode();
+            newNode.rowIndex = rowIndex;
+            newNode.column = col;
+
+            // Link Up/Down (into the column)
+            newNode.down = col;
+            newNode.up = col.up;
+            col.up.down = newNode;
+            col.up = newNode;
+            col.size++;
+
+            // Link Left/Right (into the row)
+            if (firstNode === null) {
+                firstNode = newNode;
+                newNode.left = newNode;
+                newNode.right = newNode;
+            } else {
+                newNode.right = firstNode;
+                newNode.left = firstNode.left;
+                firstNode.left.right = newNode;
+                firstNode.left = newNode;
+            }
+        }
+    }
+    // --- END OF ADDED FUNCTION ---
+
+
+    /* * REMOVED the old, buggy search(solution) function. 
+     * We will only use solveFirst() which calls solveRecursive().
+     */
+
+    // Re-implementing search with cleaner loop for JS
+    solveFirst() {
+        let solution = [];
+        this.solveRecursive(solution);
+        return solution;
+    }
+
+    solveRecursive(solution) {
+        if (this.header.right === this.header) return true;
+
+        // 1. Choose Column
+        let c = this.header.right;
+        let minSize = c.size;
+        let temp = c.right;
+        while (temp !== this.header) {
+            if (temp.size < minSize) {
+                c = temp;
+                minSize = temp.size;
+            }
+            temp = temp.right;
+        }
+
+        // 2. Cover
+        this.cover(c);
+
+        // 3. Iterate rows
+        let r = c.down;
+        while (r !== c) {
+            solution.push(r.rowIndex);
+
+            // Cover columns in this row
+            let j = r.right;
+            while (j !== r) {
+                this.cover(j.column);
+                j = j.right;
+            }
+
+            if (this.solveRecursive(solution)) return true;
+
+            // Backtrack
+            j = r.left;
+            while (j !== r) {
+                this.uncover(j.column);
+                j = j.left;
+            }
+            solution.pop();
+            r = r.down;
+        }
+
+        this.uncover(c);
+        return false;
+    }
+
+    cover(c) {
+        c.right.left = c.left;
+        c.left.right = c.right;
+        
+        let i = c.down;
+        while (i !== c) {
+            let j = i.right;
+            while (j !== i) {
+                j.down.up = j.up;
+                j.up.down = j.down;
+                j.column.size--;
+                j = j.right;
+            }
+            i = i.down;
+        }
+    }
+
+    uncover(c) {
+        let i = c.up;
+        while (i !== c) {
+            let j = i.left;
+            while (j !== i) {
+                j.column.size++;
+                j.down.up = j;
+                j.up.down = j;
+                j = j.left;
+            }
+            i = i.up;
+        }
+        c.right.left = c;
+        c.left.right = c;
+    }
+}
+
+/**
+ * PART 2: SUDOKU LOGIC
+ * -------------------------------------------------------
+ * Maps Sudoku rules to Exact Cover constraints.
+ */
+class SudokuDLX {
+    constructor() {
+        this.SIZE = 9;
+        this.BOX_SIZE = 3;
+    }
+
+    // Converts the board state to a DLX Exact Cover Matrix
+    solve(boardArray) {
+        const dlx = new DLX();
+        // 4 Constraints x 81 cells = 324 columns
+        // 0-80: Cell Constraint (Every cell has a number)
+        // 81-161: Row Constraint (Row r has number n)
+        // 162-242: Col Constraint (Col c has number n)
+        // 243-323: Box Constraint (Box b has number n)
+        dlx.buildHeaders(324);
+
+        // Rows: There are 729 possible moves (9 rows * 9 cols * 9 numbers)
+        // We only add rows that match the current boardArray (pre-filled or empty)
+        
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                for (let num = 1; num <= 9; num++) {
+                    // If board has a number here, only allow that number
+                    if (boardArray[r][c] !== 0 && boardArray[r][c] !== num) continue;
+
+                    // Calculate constraint column indices
+                    const boxIndex = Math.floor(r / 3) * 3 + Math.floor(c / 3);
+                    
+                    const idx1 = r * 9 + c; // Cell constraint
+                    const idx2 = 81 + r * 9 + (num - 1); // Row constraint
+                    const idx3 = 162 + c * 9 + (num - 1); // Col constraint
+                    const idx4 = 243 + boxIndex * 9 + (num - 1); // Box constraint
+
+                    // Map the unique row ID (r, c, num) to a single integer
+                    // ID = (r * 81) + (c * 9) + (num - 1)
+                    const rowID = (r * 81) + (c * 9) + (num - 1);
+
+                    dlx.addRow(rowID, [idx1, idx2, idx3, idx4]);
+                }
+            }
+        }
+
+        const solutionIndices = dlx.solveFirst();
+        
+        if (!solutionIndices || solutionIndices.length === 0) return null;
+
+        // Convert solution indices back to board
+        const resultBoard = Array(9).fill().map(() => Array(9).fill(0));
+        for (let id of solutionIndices) {
+            const r = Math.floor(id / 81);
+            const c = Math.floor((id % 81) / 9);
+            const num = (id % 9) + 1;
+            resultBoard[r][c] = num;
+        }
+        return resultBoard;
+    }
+}
+
+/**
+ * PART 2.5: NAIVE ALGORITHM X (FOR COMPARISON)
+ * -------------------------------------------------------
+ */
+class NaiveSudokuSolver {
+
+    constructor() {
+        this.matrix = []; // Will be an array of { id: num, cols: Set }
+        this.columns = new Set();
+        this.solution = [];
+    }
+
+    // Helper to get column indices for a given move
+    _getIndices(r, c, num) {
+        const boxIndex = Math.floor(r / 3) * 3 + Math.floor(c / 3);
+        const idx1 = r * 9 + c; // Cell constraint
+        const idx2 = 81 + r * 9 + (num - 1); // Row constraint
+        const idx3 = 162 + c * 9 + (num - 1); // Col constraint
+        const idx4 = 243 + boxIndex * 9 + (num - 1); // Box constraint
+        const rowID = (r * 81) + (c * 9) + (num - 1);
+        return { id: rowID, cols: new Set([idx1, idx2, idx3, idx4]) };
+    }
+
+    solve(boardArray) {
+        this.matrix = [];
+        this.columns = new Set();
+        this.solution = [];
+        let initialRows = []; // Rows from the pre-filled board
+
+        // 1. Build the full 729-row matrix and 324-column set
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                for (let num = 1; num <= 9; num++) {
+                    const move = this._getIndices(r, c, num);
+                    this.matrix.push(move);
+                    move.cols.forEach(col => this.columns.add(col));
+                }
+            }
+        }
+
+        // 2. "Cover" all moves dictated by the initial board
+        let currentMatrix = this.matrix;
+        let currentCols = this.columns;
+
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                const num = boardArray[r][c];
+                if (num !== 0) {
+                    const move = this._getIndices(r, c, num);
+                    this.solution.push(move.id);
+                    
+                    // This is the "cover" operation
+                    const coverResult = this._cover(currentMatrix, currentCols, move);
+                    if (coverResult === null) return null; // Invalid board
+                    
+                    currentMatrix = coverResult.matrix;
+                    currentCols = coverResult.cols;
+                }
+            }
+        }
+
+        // 3. Solve the remaining sub-problem
+        if (this._search(currentMatrix, currentCols)) {
+            // Solution is in this.solution. Convert it.
+            const resultBoard = Array(9).fill().map(() => Array(9).fill(0));
+            for (let id of this.solution) {
+                const r = Math.floor(id / 81);
+                const c = Math.floor((id % 81) / 9);
+                const num = (id % 9) + 1;
+                resultBoard[r][c] = num;
+            }
+            return resultBoard;
+        }
+        
+        return null; // No solution
+    }
+
+    _cover(matrix, columns, row) {
+        let newCols = new Set(columns);
+        let newMatrix = [];
+
+        // Remove all columns this row satisfies
+        row.cols.forEach(col => newCols.delete(col));
+
+        // Filter the matrix
+        // Keep rows that *don't* conflict with the chosen row
+        for (const r of matrix) {
+            let conflicts = false;
+            for (const col of r.cols) {
+                if (row.cols.has(col)) {
+                    conflicts = true;
+                    break;
+                }
+            }
+            if (!conflicts) {
+                newMatrix.push(r);
+            }
+        }
+        
+        
+        // This is a simple but slow implementation
+        let finalMatrix = newMatrix.map(r => {
+             let prunedCols = new Set(r.cols);
+             r.cols.forEach(col => {
+                 if (!newCols.has(col)) {
+                     prunedCols.delete(col);
+                 }
+             });
+             return { id: r.id, cols: prunedCols };
+        });
+
+
+        return { matrix: finalMatrix, cols: newCols };
+    }
+
+    _search(matrix, columns) {
+        if (columns.size === 0) return true; // Solved!
+
+        // 1. Choose Column (S-heuristic)
+        let bestCol = -1;
+        let minSize = Infinity;
+        
+        for (const c of columns) {
+            let size = 0;
+            for (const r of matrix) {
+                if (r.cols.has(c)) {
+                    size++;
+                }
+            }
+            if (size < minSize) {
+                minSize = size;
+                bestCol = c;
+            }
+        }
+
+        if (minSize === 0) return false; // Dead end
+
+        // 3. Iterate rows that have a '1' in bestCol
+        // We must copy the array of rows to avoid modification-during-iteration issues
+        const rowsToTry = matrix.filter(r => r.cols.has(bestCol));
+
+        for (const r of rowsToTry) {
+            this.solution.push(r.id);
+
+            // 4. Cover
+            const { matrix: newMatrix, cols: newCols } = this._cover(matrix, columns, r);
+
+            // 5. Recurse
+            if (this._search(newMatrix, newCols)) {
+                return true;
+            }
+
+            // 6. Backtrack
+            this.solution.pop();
+            // No "uncover" needed; the newMatrix/newCols are just discarded
+        }
+
+        return false;
+    }
+}
+
+
+/**
+ * UI CONTROLLER
+ */
+const app = {
+    gridEl: document.getElementById('grid-container'),
+    inputs: [],
+    dlxSolver: new SudokuDLX(),
+    naiveSolver: new NaiveSudokuSolver(),
+    
+    init() {
+        this.createGrid();
+        this.generatePuzzle();
+    },
+
+    createGrid() {
+        this.gridEl.innerHTML = '';
+        this.inputs = [];
+        for (let r = 0; r < 9; r++) {
+            let rowInputs = [];
+            for (let c = 0; c < 9; c++) {
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'sudoku-cell w-full h-full bg-white border border-slate-200 text-center text-xl font-bold text-slate-800 focus:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition duration-100';
+                input.min = 1;
+                input.max = 9;
+                
+                // Input validation logic
+                input.addEventListener('input', (e) => {
+                    if (e.target.value.length > 1) e.target.value = e.target.value.slice(0, 1);
+                    if (!/[1-9]/.test(e.target.value)) e.target.value = '';
+                    e.target.classList.remove('text-blue-600', 'text-red-500');
+                    e.target.classList.add('text-slate-800');
+                });
+
+                this.gridEl.appendChild(input);
+                rowInputs.push(input);
+            }
+            this.inputs.push(rowInputs);
+        }
+    },
+
+    readGrid() {
+        const board = [];
+        for (let r = 0; r < 9; r++) {
+            const row = [];
+            for (let c = 0; c < 9; c++) {
+                const val = parseInt(this.inputs[r][c].value);
+                row.push(isNaN(val) ? 0 : val);
+            }
+            board.push(row);
+        }
+        return board;
+    },
+
+    updateGrid(board, isSolve = false) {
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                const val = board[r][c];
+                const input = this.inputs[r][c];
+                
+                if (val !== 0) {
+                    if (input.value === '') {
+                        input.value = val;
+                        if (isSolve) {
+                            input.classList.add('text-blue-600', 'fade-in'); // Highlight solved cells
+                        } else {
+                            input.classList.add('text-slate-800');
+                        }
+                    }
+                } else {
+                    input.value = '';
+                }
+            }
+        }
+    },
+
+    clearBoard() {
+        this.inputs.flat().forEach(inp => {
+            inp.value = '';
+            inp.classList.remove('text-blue-600', 'text-red-500', 'fade-in');
+            inp.classList.add('text-slate-800');
+        });
+        this.setStatus('Board Cleared', 'white');
+    },
+
+    solve() {
+        const currentBoard = this.readGrid();
+        const start = performance.now();
+        const algo = document.getElementById('algo-select').value;
+        
+        let solution = null;
+        let solverName = "DLX";
+
+        try {
+            if (algo === 'dlx') {
+                solverName = "DLX";
+                solution = this.dlxSolver.solve(currentBoard);
+            } else {
+                solverName = "Naive";
+                solution = this.naiveSolver.solve(currentBoard);
+            }
+            
+            const end = performance.now();
+            
+            if (solution) {
+                this.updateGrid(solution, true);
+                this.setStatus(`Solved (${solverName})!`, 'text-cyan-400');
+                document.getElementById('timer-text').innerText = (end - start).toFixed(2) + ' ms';
+            } else {
+                this.setStatus('No Solution Exists', 'text-red-400');
+                document.getElementById('timer-text').innerText = (end - start).toFixed(2) + ' ms';
+            }
+        } catch (e) {
+            console.error(e);
+            this.setStatus(`Error (${solverName})`, 'text-red-400');
+        }
+    },
+
+    generatePuzzle() {
+        this.clearBoard();
+        this.setStatus('Generating...', 'text-yellow-400');
+
+        // 1. Seed the diagonal boxes (they are independent) to create randomness
+        const board = Array(9).fill().map(() => Array(9).fill(0));
+        
+        const fillBox = (startRow, startCol) => {
+            let nums = [1,2,3,4,5,6,7,8,9].sort(() => Math.random() - 0.5);
+            let idx = 0;
+            for(let r=0; r<3; r++) {
+                for(let c=0; c<3; c++) {
+                    board[startRow+r][startCol+c] = nums[idx++];
+                }
+            }
+        };
+
+        fillBox(0,0);
+        fillBox(3,3);
+        fillBox(6,6);
+
+        // 2. Solve this random seed to get a full valid board
+        // NOTE: We *always* use the fast DLX solver for generation,
+        // as the naive solver would be far too slow.
+        const fullSolution = this.dlxSolver.solve(board);
+
+        // 3. Remove elements to create the puzzle (remove ~40-50 numbers)
+        const attempts = 45; 
+        for(let i=0; i<attempts; i++) {
+            let r = Math.floor(Math.random() * 9);
+            let c = Math.floor(Math.random() * 9);
+            while(fullSolution[r][c] === 0) {
+                 r = Math.floor(Math.random() * 9);
+                 c = Math.floor(Math.random() * 9);
+            }
+            fullSolution[r][c] = 0;
+        }
+
+        this.updateGrid(fullSolution);
+        this.setStatus('New Puzzle Ready', 'text-cyan-400');
+        document.getElementById('timer-text').innerText = '0ms';
+    },
+
+    setStatus(msg, colorClass) {
+        const el = document.getElementById('status-text');
+        el.innerText = msg;
+        el.className = `text-sm font-mono ${colorClass}`;
+    }
+};
+
+// Initialize
+app.init();
+
+</script>
+</body>
+</html>
