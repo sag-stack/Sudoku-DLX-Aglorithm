@@ -50,8 +50,12 @@
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                         Solve Instantly
                     </button>
-                    <button onclick="app.clearBoard()" class="w-full py-3 px-4 border border-slate-600 hover:bg-slate-800 rounded-lg font-semibold transition text-slate-300">
-                        Clear Board
+                    <button onclick="app.resetPuzzle()" class="w-full py-3 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12a9 9 0 1118 0 9 9 0 01-18 0z"></path></svg>
+                        Reset Puzzle
+                    </button>
+                    <button onclick="app.clearAll()" class="w-full py-3 px-4 border border-slate-600 hover:bg-slate-800 rounded-lg font-semibold transition text-slate-300">
+                        Clear All
                     </button>
                 </div>
             </div>
@@ -323,6 +327,9 @@ class SudokuDLX {
 /**
  * PART 2.5: NAIVE ALGORITHM X (FOR COMPARISON)
  * -------------------------------------------------------
+ * Solves the exact cover problem using standard arrays.
+ * This is Algorithm X *without* the DLX optimization.
+ * It is expected to be MUCH slower.
  */
 class NaiveSudokuSolver {
 
@@ -419,6 +426,10 @@ class NaiveSudokuSolver {
             }
         }
         
+        // Prune empty columns from the new matrix rows (for S-heuristic)
+        // This is complex, so for simplicity we'll just filter.
+        // A better naive solver would rebuild row sets.
+        // But let's just keep it simple to show the slowdown.
         
         // This is a simple but slow implementation
         let finalMatrix = newMatrix.map(r => {
@@ -483,13 +494,15 @@ class NaiveSudokuSolver {
 
 
 /**
- * UI CONTROLLER
+ * PART 3: UI CONTROLLER
+ * -------------------------------------------------------
  */
 const app = {
     gridEl: document.getElementById('grid-container'),
     inputs: [],
     dlxSolver: new SudokuDLX(),
     naiveSolver: new NaiveSudokuSolver(),
+    originalPuzzle: [], // <-- Add this to store the puzzle
     
     init() {
         this.createGrid();
@@ -523,48 +536,66 @@ const app = {
         }
     },
 
-    readGrid() {
-        const board = [];
-        for (let r = 0; r < 9; r++) {
-            const row = [];
-            for (let c = 0; c < 9; c++) {
-                const val = parseInt(this.inputs[r][c].value);
-                row.push(isNaN(val) ? 0 : val);
-            }
-            board.push(row);
-        }
-        return board;
-    },
-
-    updateGrid(board, isSolve = false) {
+    // --- ADD THIS ENTIRE FUNCTION BACK IN ---
+    updateGrid(boardArray, isSolveResult = false) {
         for (let r = 0; r < 9; r++) {
             for (let c = 0; c < 9; c++) {
-                const val = board[r][c];
                 const input = this.inputs[r][c];
+                const value = boardArray[r][c];
                 
-                if (val !== 0) {
-                    if (input.value === '') {
-                        input.value = val;
-                        if (isSolve) {
-                            input.classList.add('text-blue-600', 'fade-in'); // Highlight solved cells
-                        } else {
-                            input.classList.add('text-slate-800');
-                        }
+                // Clear old styles
+                input.classList.remove('text-blue-600', 'text-red-500', 'fade-in');
+                
+                if (value !== 0) {
+                    const wasEmpty = input.value === '';
+                    input.value = value;
+                    input.readOnly = true;
+                    
+                    if (isSolveResult && wasEmpty) {
+                        // This is a newly solved cell, style it blue
+                        input.classList.add('text-blue-600', 'fade-in'); 
+                    } else {
+                        // This was a pre-filled puzzle number
+                        input.classList.add('text-slate-800');
                     }
                 } else {
+                    // This is an empty cell for the user to fill
                     input.value = '';
+                    input.readOnly = false;
+                    input.classList.add('text-slate-800');
                 }
             }
         }
     },
+    // --- END OF ADDED FUNCTION ---
 
-    clearBoard() {
+    clearAll() { // <-- Renamed from clearBoard
+        this.inputs.flat().forEach(inp => {
+            inp.value = '';
+            inp.classList.remove('text-blue-600', 'text-red-500', 'fade-in');
+            inp.classList.add('text-slate-800');
+            inp.readOnly = false; // <-- ADD THIS LINE
+        });
+        this.originalPuzzle = []; // <-- Also clear the stored puzzle
+        this.setStatus('Board Cleared', 'white');
+    },
+
+    resetPuzzle() {
+        if (this.originalPuzzle.length === 0) {
+            this.clearAll(); // Failsafe if no puzzle is stored
+            return;
+        }
+        
+        // First, clear all inputs to remove user-entered numbers
         this.inputs.flat().forEach(inp => {
             inp.value = '';
             inp.classList.remove('text-blue-600', 'text-red-500', 'fade-in');
             inp.classList.add('text-slate-800');
         });
-        this.setStatus('Board Cleared', 'white');
+
+        // Now, update the grid with the stored original puzzle
+        this.updateGrid(this.originalPuzzle, false); // false = don't highlight as "solve"
+        this.setStatus('Puzzle Reset', 'text-cyan-400');
     },
 
     solve() {
@@ -601,7 +632,7 @@ const app = {
     },
 
     generatePuzzle() {
-        this.clearBoard();
+        this.clearAll(); // <-- FIX: Renamed from this.clearBoard()
         this.setStatus('Generating...', 'text-yellow-400');
 
         // 1. Seed the diagonal boxes (they are independent) to create randomness
@@ -639,6 +670,7 @@ const app = {
         }
 
         this.updateGrid(fullSolution);
+        this.originalPuzzle = fullSolution.map(row => [...row]); // <-- Store a deep copy
         this.setStatus('New Puzzle Ready', 'text-cyan-400');
         document.getElementById('timer-text').innerText = '0ms';
     },
