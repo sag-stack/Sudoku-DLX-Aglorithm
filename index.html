@@ -598,8 +598,21 @@ const app = {
         this.setStatus('Puzzle Reset', 'text-cyan-400');
     },
 
+    // --- ADD THIS ENTIRE FUNCTION BACK IN ---
+    readGrid() {
+        const board = Array(9).fill().map(() => Array(9).fill(0));
+        for (let r = 0; r < 9; r++) {
+            for (let c = 0; c < 9; c++) {
+                const value = this.inputs[r][c].value;
+                board[r][c] = value === '' ? 0 : parseInt(value, 10);
+            }
+        }
+        return board;
+    },
+    // --- END OF ADDED FUNCTION ---
+
     solve() {
-        const currentBoard = this.readGrid();
+        const currentBoard = this.readGrid(); // <-- This line will now work
         const start = performance.now();
         const algo = document.getElementById('algo-select').value;
         
